@@ -17,12 +17,6 @@
 			"database_name": "superhuman-control",
 			"database_id": "d2b3a512-02b9-431f-ae30-c945df5ada71",
 			"migrations_dir": "migrations/control"
-		},
-		{
-			"binding": "superhuman_data_1",
-			"database_name": "superhuman-data-1",
-			"database_id": "13c7c8a4-e6c6-4deb-a72a-b8352dbb2d23",
-			"migrations_dir": "migrations/data"
 		}
 	]
 	/**

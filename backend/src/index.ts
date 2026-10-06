@@ -165,59 +165,8 @@ async function route(request: Request, env: Env): Promise<Response> {
 		return Response.json({ items: result.results }, { headers: { "Cache-Control": "no-store" } });
 	}
 
-	if (pathname === "/api/notes" || pathname.startsWith("/api/notes/")) {
-		const user = await requireUser(request, env.superhuman_control);
-		if (!isAuthenticatedUser(user)) return user;
-		const notes = env.superhuman_data_1;
-		if (pathname === "/api/notes" && method === "GET") {
-			const result = await notes.prepare(
-				"SELECT id, title, content, is_pinned, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY is_pinned DESC, updated_at DESC",
-			).bind(user.id).all();
-			return Response.json({ notes: result.results }, { headers: { "Cache-Control": "no-store" } });
-		}
-		if (method === "POST" && pathname === "/api/notes") {
-			if (!(await isTrustedMutation(request, env))) return jsonError("Untrusted request origin", 403);
-			const body = await parseJsonObject(request, 60_000);
-			const title = typeof body?.title === "string" ? body.title.trim() : "";
-			const content = typeof body?.content === "string" ? body.content : "";
-			const isPinned = body?.is_pinned === true;
-			if (!title || title.length > 160 || content.length > 50_000) return jsonError("A title (up to 160 characters) and content (up to 50,000 characters) are required", 400);
-			const id = crypto.randomUUID();
-			await notes.prepare("INSERT INTO notes (id, user_id, title, content, is_pinned) VALUES (?, ?, ?, ?, ?)")
-				.bind(id, user.id, title, content, isPinned ? 1 : 0).run();
-			const created = await notes.prepare("SELECT id, title, content, is_pinned, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?")
-				.bind(id, user.id).first();
-			return Response.json({ note: created }, { status: 201, headers: { "Cache-Control": "no-store" } });
-		}
-		const noteId = pathname.startsWith("/api/notes/") ? decodeURIComponent(pathname.slice("/api/notes/".length)) : "";
-		if (!noteId || noteId.includes("/")) return jsonError("Not found", 404);
-		if (method === "PATCH") {
-			if (!(await isTrustedMutation(request, env))) return jsonError("Untrusted request origin", 403);
-			const body = await parseJsonObject(request, 60_000);
-			if (!body) return jsonError("Invalid JSON body", 400);
-			const current = await notes.prepare("SELECT title, content, is_pinned FROM notes WHERE id = ? AND user_id = ?")
-				.bind(noteId, user.id).first<{ title: string; content: string; is_pinned: number }>();
-			if (!current) return jsonError("Note not found", 404);
-			const title = body.title === undefined ? current.title : typeof body.title === "string" ? body.title.trim() : "";
-			const content = body.content === undefined ? current.content : typeof body.content === "string" ? body.content : "";
-			const pinned = body.is_pinned === undefined ? current.is_pinned : body.is_pinned === true ? 1 : body.is_pinned === false ? 0 : -1;
-			if (!title || title.length > 160 || content.length > 50_000 || pinned < 0) return jsonError("Invalid note fields", 400);
-			await notes.prepare("UPDATE notes SET title = ?, content = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?")
-				.bind(title, content, pinned, noteId, user.id).run();
-			const updated = await notes.prepare("SELECT id, title, content, is_pinned, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?")
-				.bind(noteId, user.id).first();
-			return Response.json({ note: updated }, { headers: { "Cache-Control": "no-store" } });
-		}
-		if (method === "DELETE") {
-			if (!(await isTrustedMutation(request, env))) return jsonError("Untrusted request origin", 403);
-			const result = await notes.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?").bind(noteId, user.id).run();
-			return result.meta.changes ? new Response(null, { status: 204 }) : jsonError("Note not found", 404);
-		}
-		return jsonError("Method not allowed", 405);
-	}
-
-	// All future data APIs are private by default. Route handlers should also use
-	// requireUser() and scope every query using this authenticated user's id.
+	// Unknown API routes return 404. Under the local-first architecture,
+	// productivity data is stored on-device and not routed through the cloud Worker.
 	if (pathname.startsWith("/api/")) {
 		const user = await requireUser(request, env.superhuman_control);
 		if (!isAuthenticatedUser(user)) return user;

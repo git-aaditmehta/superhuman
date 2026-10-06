@@ -2,9 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
 
-const base = "https://example.com";
+const base = env.FRONTEND_ORIGIN ?? "https://example.com";
 const origin = { Origin: base };
-type Note = { id: string; title: string; content: string; is_pinned: number };
 
 async function post(path: string, body: unknown): Promise<Response> {
 	return worker.fetch(new Request(`${base}${path}`, {
@@ -26,7 +25,6 @@ describe("authentication", () => {
 	const email = `auth-${crypto.randomUUID()}@example.com`;
 	let userId = "";
 	let cookie = "";
-	let noteId = "";
 
 	beforeAll(async () => {
 		// The Cloudflare Vitest D1 binding is isolated from Wrangler's local
@@ -39,11 +37,6 @@ describe("authentication", () => {
 		await env.superhuman_control.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
 			id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`).run();
-		await env.superhuman_data_1.prepare(`CREATE TABLE IF NOT EXISTS notes (
-			id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '',
-			is_pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`).run();
 		await env.superhuman_control.prepare("CREATE TABLE IF NOT EXISTS cloudflare_accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL, cloudflare_account_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
 		await env.superhuman_control.prepare("CREATE TABLE IF NOT EXISTS data_databases (id TEXT PRIMARY KEY, cloudflare_account_ref TEXT NOT NULL, name TEXT NOT NULL, d1_database_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'active', current_size_bytes INTEGER NOT NULL DEFAULT 0, user_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
@@ -70,31 +63,12 @@ describe("authentication", () => {
 		expect(await me.json()).toEqual({ user: { id: userId, email, role: "user" } });
 	});
 
-	it("requires auth and scopes note queries to the session user even when React sends another user_id", async () => {
-		const unauthenticated = await worker.fetch(new Request(`${base}/api/notes`, { method: "GET" }), env, {} as ExecutionContext);
-		expect(unauthenticated.status).toBe(401);
-		const created = await call("/api/notes", "POST", { title: "Private thought", content: "Only mine", user_id: "attacker-controlled" }, cookie);
-		expect(created.status).toBe(201);
-		const createdBody = await created.json() as { note: Note };
-		noteId = createdBody.note.id;
-		expect(createdBody.note).not.toHaveProperty("user_id", "attacker-controlled");
-		const firstUserNotes = await call("/api/notes", "GET", undefined, cookie);
-		expect((await firstUserNotes.json() as { notes: Note[] }).notes.map(note => note.id)).toContain(noteId);
-
-		const secondEmail = `auth-${crypto.randomUUID()}@example.com`;
-		const secondResponse = await post("/api/auth/register", { email: secondEmail, password: "correct horse battery staple" });
-		const secondCookie = (secondResponse.headers.get("Set-Cookie") ?? "").split(";")[0];
-		const secondUserNotes = await call("/api/notes", "GET", undefined, secondCookie);
-		expect((await secondUserNotes.json() as { notes: Note[] }).notes).toHaveLength(0);
-		await env.superhuman_control.prepare("DELETE FROM users WHERE email = ?").bind(secondEmail).run();
-	});
-
 	it("does not grant admin privileges to self-registered users", async () => {
 		const response = await worker.fetch(new Request(`${base}/api/admin/me`, { headers: { Cookie: cookie } }), env, {} as ExecutionContext);
 		expect(response.status).toBe(403);
 	});
 
-	it("bootstraps only the configured admin email and serves metadata without exposing notes", async () => {
+	it("bootstraps only the configured admin email and serves metadata", async () => {
 		const adminEmail = `owner-${crypto.randomUUID()}@example.com`;
 		const adminPassword = "private admin password 2026";
 		const adminEnv = { ...env, ADMIN_EMAIL: adminEmail, ADMIN_PASSWORD: adminPassword };
@@ -107,7 +81,6 @@ describe("authentication", () => {
 		expect(dashboard.status).toBe(200);
 		const userData = await call("/api/admin/users", "GET", undefined, adminCookie, adminEnv);
 		expect(userData.status).toBe(200);
-		expect(await userData.text()).not.toContain("Private thought");
 		await env.superhuman_control.prepare("DELETE FROM users WHERE email = ?").bind(adminEmail).run();
 	});
 
@@ -119,7 +92,6 @@ describe("authentication", () => {
 		expect(logout.status).toBe(204);
 		const me = await worker.fetch(new Request(`${base}/api/auth/me`, { headers: { Cookie: cookie } }), env, {} as ExecutionContext);
 		expect(me.status).toBe(401);
-		await env.superhuman_data_1.prepare("DELETE FROM notes WHERE id = ?").bind(noteId).run();
 		await env.superhuman_control.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
 	});
 
