@@ -1,0 +1,17 @@
+{
+  "name": "Superhuman",
+  "short_name": "Superhuman",
+  "description": "Local-first goal achievement, habits, notes, and life history.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0f12",
+  "theme_color": "#0d0f12",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
