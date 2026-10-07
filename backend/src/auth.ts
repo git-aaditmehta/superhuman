@@ -125,8 +125,12 @@ export function isAuthenticatedUser(value: AuthenticatedUser | Response): value 
 
 export async function isTrustedMutation(request: Request, env: AuthEnv): Promise<boolean> {
 	const origin = request.headers.get("Origin");
-	const allowedOrigin = env.FRONTEND_ORIGIN ?? new URL(request.url).origin;
-	return origin === allowedOrigin;
+	if (!origin) return false;
+	if (env.FRONTEND_ORIGIN && origin === env.FRONTEND_ORIGIN) return true;
+	if (origin.endsWith(".pages.dev")) return true;
+	if (origin === new URL(request.url).origin) return true;
+	if (origin.includes("localhost") || origin.includes("127.0.0.1")) return true;
+	return false;
 }
 
 export function isValidEmail(value: unknown): value is string {

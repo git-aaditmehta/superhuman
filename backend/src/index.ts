@@ -21,9 +21,15 @@ function jsonError(message: string, status: number): Response {
 
 function withCors(response: Response, request: Request, env: Env): Response {
 	const origin = request.headers.get("Origin");
-	const allowedOrigin = env.FRONTEND_ORIGIN ?? new URL(request.url).origin;
-	if (origin === allowedOrigin) {
-		response.headers.set("Access-Control-Allow-Origin", allowedOrigin);
+	const isAllowed = origin && (
+		(env.FRONTEND_ORIGIN && origin === env.FRONTEND_ORIGIN) ||
+		origin.endsWith(".pages.dev") ||
+		origin === new URL(request.url).origin ||
+		origin.includes("localhost") ||
+		origin.includes("127.0.0.1")
+	);
+	if (origin && isAllowed) {
+		response.headers.set("Access-Control-Allow-Origin", origin);
 		response.headers.set("Access-Control-Allow-Credentials", "true");
 		response.headers.set("Access-Control-Allow-Headers", "Content-Type");
 		response.headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
