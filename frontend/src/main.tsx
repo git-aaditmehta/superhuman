@@ -12,7 +12,7 @@ import { savedItemsRepository, type SavedItem } from "./storage/savedItemsReposi
 import { getDailyQuote, getWeeklyQuote } from "./data/quotes";
 import "./style.css";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8787" : "")).replace(/\/$/, "");
 type User = { id: string; email: string; role: "user" | "admin" };
 type Tone = "blue" | "lilac" | "mint" | "peach" | "butter";
 type Screen = "today" | "habits" | "goals" | "notes" | "calendar" | "summaries" | "praise" | "save" | "settings" | "admin";
