@@ -11,7 +11,7 @@ export interface AuthenticatedUser {
 
 const SESSION_COOKIE = "superhuman_session";
 const SESSION_DAYS = 30;
-const PBKDF2_ITERATIONS = 310_000;
+const PBKDF2_ITERATIONS = 100_000;
 const encoder = new TextEncoder();
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -49,7 +49,7 @@ export async function hashPassword(password: string): Promise<string> {
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
 	const [algorithm, iterationText, saltText, expected] = stored.split("$");
 	const iterations = Number(iterationText);
-	if (algorithm !== "pbkdf2-sha256" || !Number.isSafeInteger(iterations) || iterations < 100_000 || iterations > 1_000_000 || !saltText || !expected) return false;
+	if (algorithm !== "pbkdf2-sha256" || !Number.isSafeInteger(iterations) || iterations < 10_000 || iterations > 100_000 || !saltText || !expected) return false;
 	const actual = await derivePassword(password, base64UrlToBytes(saltText), iterations);
 	const a = encoder.encode(actual);
 	const b = encoder.encode(expected);
