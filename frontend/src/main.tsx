@@ -68,10 +68,35 @@ function App() {
     return () => mql.removeEventListener("change", handler);
   }, [theme, applyTheme]);
 
-  async function authenticate(mode: "login" | "register", email: string, password: string) {
+  async function authenticate(email: string, password: string) {
     setBusy(true); setNotice("");
     try {
-      const result = await api<{ user: User }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify({ email, password }) });
+      let result: { user: User };
+      try {
+        result = await api<{ user: User }>("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+      } catch (loginErr) {
+        // If account does not exist yet, seamlessly create it so new users never face a signup friction
+        const errMsg = loginErr instanceof Error ? loginErr.message : "";
+        if (errMsg.toLowerCase().includes("invalid email or password")) {
+          try {
+            result = await api<{ user: User }>("/api/auth/register", {
+              method: "POST",
+              body: JSON.stringify({ email, password }),
+            });
+          } catch (regErr) {
+            const regMsg = regErr instanceof Error ? regErr.message : "";
+            if (regMsg.includes("409") || regMsg.toLowerCase().includes("unable to create account")) {
+              throw new Error("Invalid password for this account.");
+            }
+            throw regErr;
+          }
+        } else {
+          throw loginErr;
+        }
+      }
       setUser(result.user);
       const prefs = preferencesRepository.get(result.user.id);
       applyTheme(prefs.theme);
@@ -208,13 +233,12 @@ function App() {
 
 
 /* ═══════════════════════════════════════════
-   AUTH SCREEN
+   AUTH SCREEN (PLAIN LOGIN)
    ═══════════════════════════════════════════ */
-function AuthScreen({ onSubmit, busy, notice }: { onSubmit: (mode: "login" | "register", email: string, password: string) => Promise<void>; busy: boolean; notice: string }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+function AuthScreen({ onSubmit, busy, notice }: { onSubmit: (email: string, password: string) => Promise<void>; busy: boolean; notice: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  function submit(e: FormEvent) { e.preventDefault(); void onSubmit(mode, email, password); }
+  function submit(e: FormEvent) { e.preventDefault(); void onSubmit(email, password); }
 
   return (
     <div className="auth-shell">
@@ -243,17 +267,13 @@ function AuthScreen({ onSubmit, busy, notice }: { onSubmit: (mode: "login" | "re
         <div className="auth-mobile-brand"><span className="brand-mark">s</span> superhuman</div>
         <div className="auth-card">
           <div className="eyebrow">A MORE THOUGHTFUL WORKSPACE</div>
-          <h1>{mode === "login" ? "Welcome back." : "Begin with a thought."}</h1>
-          <p className="auth-intro">{mode === "login" ? "Your space is right where you left it." : "Create your personal space and make it your own."}</p>
-          <div className="auth-switch">
-            <button className={mode === "login" ? "selected" : ""} onClick={() => setMode("login")}>Sign in</button>
-            <button className={mode === "register" ? "selected" : ""} onClick={() => setMode("register")}>Create account</button>
-          </div>
+          <h1>Welcome back.</h1>
+          <p className="auth-intro">Sign in to your private workspace.</p>
           <form className="auth-form" onSubmit={submit}>
             <label>Email address<input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></label>
-            <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === "register" ? "At least 12 characters" : "Your password"} autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "register" ? 12 : undefined} required /></label>
+            <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password" autoComplete="current-password" required /></label>
             {notice && <div className="form-error" role="alert">{notice}</div>}
-            <button className="btn-primary" disabled={busy}>{busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}<span className="btn-icon">→</span></button>
+            <button className="btn-primary" disabled={busy}>{busy ? "Please wait…" : "Sign in"}<span className="btn-icon">→</span></button>
           </form>
           <div className="privacy-line"><span className="lock-icon">◈</span> Your data stays on your device. Always.</div>
         </div>
@@ -264,54 +284,21 @@ function AuthScreen({ onSubmit, busy, notice }: { onSubmit: (mode: "login" | "re
 }
 
 /* ═══════════════════════════════════════════
-   ONBOARDING
+   ONBOARDING (IDENTITY QUESTION ONLY)
    ═══════════════════════════════════════════ */
 function OnboardingFlow({ user, onComplete }: { user: User; onComplete: () => void }) {
-  const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [identity, setIdentity] = useState("");
-  const [goalTitle, setGoalTitle] = useState("");
-  const [goalDeadline, setGoalDeadline] = useState("");
-  const [goalPlan, setGoalPlan] = useState("");
-  const [habitName, setHabitName] = useState("");
-  const [habitFloor, setHabitFloor] = useState("");
-  const [habitCue, setHabitCue] = useState("");
-  const [habitAnchor, setHabitAnchor] = useState("");
 
   async function finishOnboarding() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      // Create goal if provided
-      if (goalTitle.trim()) {
-        const goal = await goalsRepository.createGoal(user.id, {
-          title: goalTitle.trim(),
-          deadline: goalDeadline,
-          plan: goalPlan.trim(),
-        });
-        // Create habit linked to goal if provided
-        if (habitName.trim()) {
-          await habitsRepository.createHabit(user.id, {
-            name: habitName.trim(),
-            floor_action: habitFloor.trim(),
-            cue: habitCue.trim(),
-            anchor: habitAnchor.trim(),
-            goal_id: goal.id,
-          });
-        }
-        // Record in history
+      if (identity.trim()) {
         await historyRepository.addEvent(user.id, {
-          type: "goal_created",
-          title: `Goal created: ${goalTitle.trim()}`,
-          source_id: goal.id,
-          source_type: "goal",
-        });
-      } else if (habitName.trim()) {
-        await habitsRepository.createHabit(user.id, {
-          name: habitName.trim(),
-          floor_action: habitFloor.trim(),
-          cue: habitCue.trim(),
-          anchor: habitAnchor.trim(),
+          type: "custom",
+          title: "Set 90-day identity vision",
+          description: identity.trim(),
         });
       }
       preferencesRepository.completeOnboarding(user.id, identity.trim());
@@ -323,92 +310,35 @@ function OnboardingFlow({ user, onComplete }: { user: User; onComplete: () => vo
     }
   }
 
-  const steps = [
-    // Step 0: Identity
-    <div key="identity" className="onboarding-card">
-      <div className="eyebrow">LET'S START WITH YOU</div>
-      <h2>What's one thing you want to be true about yourself in 90 days?</h2>
-      <p>Think about who you want to become, not just what you want to do. This is about identity.</p>
-      <div className="onboarding-form">
-        <label>Your 90-day vision
-          <textarea value={identity} onChange={e => setIdentity(e.target.value)} placeholder="I want to be someone who..." rows={3} maxLength={500} autoFocus />
-        </label>
-      </div>
-      <div className="onboarding-actions">
-        <span className="onboarding-skip" />
-        <button className="btn-primary" onClick={() => setStep(1)}>Continue <span className="btn-icon">→</span></button>
-      </div>
-    </div>,
-
-    // Step 1: Goal
-    <div key="goal" className="onboarding-card">
-      <div className="eyebrow">L1 — NAME YOUR GOAL</div>
-      <h2>Give what matters a little more shape.</h2>
-      <p>Start with the outcome you want. We'll add a deadline and plan next.</p>
-      <div className="onboarding-form">
-        <label>What do you want to achieve?
-          <input value={goalTitle} onChange={e => setGoalTitle(e.target.value)} placeholder="A clear, meaningful outcome" maxLength={180} autoFocus />
-        </label>
-        <label>Deadline <span style={{ fontWeight: 400, color: "var(--text-tertiary)" }}>L2 · Optional</span>
-          <input type="date" value={goalDeadline} onChange={e => setGoalDeadline(e.target.value)} />
-        </label>
-        <label>Plan / strategy <span style={{ fontWeight: 400, color: "var(--text-tertiary)" }}>L3 · Optional</span>
-          <textarea value={goalPlan} onChange={e => setGoalPlan(e.target.value)} placeholder="What approach could get you there?" rows={2} />
-        </label>
-      </div>
-      <div className="onboarding-actions">
-        <button className="btn-text" onClick={() => setStep(0)}>← Back</button>
-        <button className="btn-primary" onClick={() => setStep(2)}>Continue <span className="btn-icon">→</span></button>
-      </div>
-    </div>,
-
-    // Step 2: Habit
-    <div key="habit" className="onboarding-card">
-      <div className="eyebrow">BUILD YOUR FIRST HABIT</div>
-      <h2>What's the smallest action that moves you forward?</h2>
-      <p>Define the minimum version — what you'd do on your worst day. Attach it to a cue so it becomes automatic.</p>
-      <div className="onboarding-form">
-        <label>The habit <span className="form-hint">What you'll do</span>
-          <input value={habitName} onChange={e => setHabitName(e.target.value)} placeholder="e.g., Read for 10 minutes" maxLength={120} autoFocus />
-        </label>
-        <label>Floor action <span className="form-hint">Bad-day minimum</span>
-          <input value={habitFloor} onChange={e => setHabitFloor(e.target.value)} placeholder="e.g., Read one page" maxLength={120} />
-        </label>
-        <label>Cue / context <span className="form-hint">When or where</span>
-          <input value={habitCue} onChange={e => setHabitCue(e.target.value)} placeholder="e.g., After morning coffee" maxLength={120} />
-        </label>
-        <label>Anchor for habit stacking <span className="form-hint">Optional</span>
-          <input value={habitAnchor} onChange={e => setHabitAnchor(e.target.value)} placeholder="e.g., After I brush my teeth" maxLength={120} />
-        </label>
-        {habitAnchor && habitName && (
-          <div style={{ padding: "12px", background: "var(--accent-primary-soft)", borderRadius: "var(--radius-sm)", fontSize: "12px", color: "var(--accent-primary)", fontStyle: "italic" }}>
-            "After {habitAnchor}, I will {habitName.toLowerCase()}"
-          </div>
-        )}
-      </div>
-      <div className="onboarding-actions">
-        <button className="btn-text" disabled={submitting} onClick={() => setStep(1)}>← Back</button>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button className="btn-secondary" disabled={submitting} onClick={() => void finishOnboarding()}>
-            Skip habit
-          </button>
-          <button className="btn-primary" disabled={submitting} onClick={() => void finishOnboarding()}>
+  return (
+    <div className="onboarding-shell">
+      <div className="onboarding-brand"><span className="brand-mark">s</span> superhuman</div>
+      <div className="onboarding-card">
+        <div className="eyebrow">LET'S START WITH YOU</div>
+        <h2>What's one thing you want to be true about yourself in 90 days?</h2>
+        <p>Think about who you want to become, not just what you want to do. This is about identity.</p>
+        <div className="onboarding-form">
+          <label>Your 90-day vision
+            <textarea
+              value={identity}
+              onChange={e => setIdentity(e.target.value)}
+              placeholder="I want to be someone who..."
+              rows={3}
+              maxLength={500}
+              autoFocus
+            />
+          </label>
+        </div>
+        <div className="onboarding-actions" style={{ justifyContent: "flex-end" }}>
+          <button
+            className="btn-primary"
+            disabled={submitting}
+            onClick={() => void finishOnboarding()}
+          >
             {submitting ? "Starting your journey…" : <>Start my journey <span className="btn-icon">→</span></>}
           </button>
         </div>
       </div>
-    </div>,
-  ];
-
-  return (
-    <div className="onboarding-shell">
-      <div className="onboarding-brand"><span className="brand-mark">s</span> superhuman</div>
-      <div className="onboarding-progress">
-        {[0, 1, 2].map(i => (
-          <div key={i} className={`onboarding-dot${i === step ? " active" : i < step ? " done" : ""}`} />
-        ))}
-      </div>
-      {steps[step]}
     </div>
   );
 }
@@ -1925,7 +1855,7 @@ function SettingsPage({ user, theme, onThemeChange, setNotice }: { user: User; t
   }
 
   function handleResetOnboarding() {
-    if (!window.confirm("Re-run onboarding flow? You'll be taken through the identity statement, L1–L4 goals, and initial habit setup wizard again.")) return;
+    if (!window.confirm("Re-run onboarding flow? You'll be taken through the identity statement question again.")) return;
     preferencesRepository.setOnboardingCompleted(user.id, false);
     window.location.reload();
   }
@@ -2027,7 +1957,7 @@ function SettingsPage({ user, theme, onThemeChange, setNotice }: { user: User; t
           <div className="setting-row">
             <div className="setting-info">
               <h4>Re-run Onboarding Flow</h4>
-              <p>Re-run the identity statement, L1–L4 goals, and initial habit setup wizard without losing any existing items.</p>
+              <p>Re-run the 90-day identity vision statement question without losing any existing items.</p>
             </div>
             <button className="btn-secondary" onClick={handleResetOnboarding}>
               🔄 Re-run Onboarding Flow
